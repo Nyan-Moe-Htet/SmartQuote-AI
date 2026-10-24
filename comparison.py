@@ -14,6 +14,10 @@ def compare_offers(offers, quantity):
     for offer in offers:
         price = Decimal(str(offer["Unit price (RM)"]))
         fee = Decimal(str(offer["Delivery fee"]))
+        if not price.is_finite() or not fee.is_finite() or price <= 0 or fee < 0:
+            raise ValueError("Unit prices must be positive and delivery fees non-negative finite amounts.")
+        if type(offer["MOQ"]) is not int or offer["MOQ"] < 1 or not offer["Delivery"]:
+            raise ValueError("A valid minimum order and delivery estimate are required.")
         results.append({
             **offer,
             "Total": price * quantity + fee,

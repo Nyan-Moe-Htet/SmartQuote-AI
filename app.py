@@ -4,6 +4,7 @@ from datetime import date
 
 import streamlit as st
 from comparison import compare_offers, rm
+import purchase_workflow as workflow
 
 
 st.set_page_config(
@@ -68,6 +69,54 @@ NAVIGATION = [
     "Activity Log",
 ]
 
+workflow.initialize(st.session_state)
+
+
+def review_details(purchase):
+    offer = purchase["Offer"]
+    st.write({
+        "Supplier": offer["Supplier"], "Item": purchase["Item"],
+        "Quantity": purchase["Quantity"], "Unit price": rm(offer["Unit price (RM)"]),
+        "Delivery fee": rm(offer["Delivery fee"]), "Total": rm(offer["Total"]),
+        "Minimum-order status": f"Eligible — minimum {offer['MOQ']}",
+        "Estimated delivery": offer["Delivery"],
+    })
+
+
+def render_approvals():
+    st.subheader("Purchase review and approval")
+    st.caption("Fictional demonstration purchases. Decisions and drafts persist only in this session. Nothing is sent.")
+    if not st.session_state["purchases"]:
+        st.info("Select an eligible offer on Price Comparison and submit it for approval.")
+    for reference, purchase in reversed(list(st.session_state["purchases"].items())):
+        with st.expander(f"{purchase['Offer']['Supplier']} — {purchase['Status']} — {reference}", expanded=True):
+            review_details(purchase)
+            st.write(f"Status: **{purchase['Status']}**")
+            try:
+                workflow.validate(purchase, PRICE_COMPARISON)
+            except ValueError as error:
+                st.error(str(error))
+                continue
+            if purchase["Status"] == "Pending approval":
+                if st.button("Approve Purchase", key=f"approve_{reference}"):
+                    workflow.decide(st.session_state, reference, True, PRICE_COMPARISON)
+                    st.rerun()
+                if st.button("Reject Purchase", key=f"reject_{reference}"):
+                    workflow.decide(st.session_state, reference, False, PRICE_COMPARISON)
+                    st.rerun()
+            elif purchase["Status"] == "Rejected":
+                st.warning("Rejected. No draft can be generated. Select another eligible offer on Price Comparison.")
+            elif reference not in st.session_state["drafts"]:
+                if st.button("Generate purchase-order draft", key=f"draft_{reference}"):
+                    workflow.generate_draft(st.session_state, reference, PRICE_COMPARISON)
+                    st.rerun()
+            if reference in st.session_state["drafts"]:
+                draft = st.session_state["drafts"][reference]
+                st.subheader("Draft — Not Sent")
+                st.write(f"Reference: {draft['Reference']}")
+                st.write(f"Date: {draft['Date']}")
+                review_details(draft)
+
 
 def render_dashboard() -> None:
     st.title("SmartQuote AI")
@@ -131,6 +180,10 @@ def render_price_comparison() -> None:
             "Eligibility": "Eligible" if offer["Eligible"] else f"Ineligible: minimum {offer['MOQ']} required",
         })
     st.dataframe(rows, hide_index=True, width="stretch")
+    signature = (item, quantity)
+    if st.session_state.get("last_comparison") != signature:
+        workflow.log(st.session_state, "Comparison", f"{item} | requested {quantity} units | {len(eligible)} eligible offers")
+        st.session_state["last_comparison"] = signature
     st.caption("Eligible offers are ranked by total cost; equal totals share a rank. Ineligible totals are illustrative only, not orderable at this quantity.")
     if not eligible:
         st.warning("No supplier meets this quantity. Your requested quantity has not been changed. Enter a different quantity to compare again.")
@@ -153,12 +206,22 @@ def render_price_comparison() -> None:
         )
     else:
         st.write("No eligible alternative has a shorter estimated maximum delivery time.")
+    supplier = st.selectbox("Select an eligible supplier for approval", [offer["Supplier"] for offer in eligible], index=None)
+    if supplier:
+        selected = next(offer for offer in eligible if offer["Supplier"] == supplier)
+        review_details({"Item": item, "Quantity": quantity, "Offer": selected})
+    if st.button("Submit for Approval", disabled=supplier is None):
+        workflow.submit(st.session_state, item, quantity, supplier, PRICE_COMPARISON)
+        st.success("Submitted for human review. No purchase has been approved automatically.")
+    render_approvals()
 
 
 def render_purchase_orders() -> None:
     st.title("Purchase Orders")
-    st.write("Create a local draft preview from a selected supplier quotation.")
-    st.caption("This prototype does not send or save purchase orders.")
+    render_approvals()
+    st.divider()
+    st.subheader("Manual cost calculator")
+    st.caption("Existing manual preview tool: estimate only, not an approved purchase or purchase-order draft. Use Price Comparison and approval above to create a draft.")
 
     suppliers = sorted({quote["Supplier"] for quote in SAMPLE_QUOTATIONS})
     items = list(PRICE_COMPARISON)
@@ -174,21 +237,28 @@ def render_purchase_orders() -> None:
             step=0.10,
             format="%.2f",
         )
-        submitted = st.form_submit_button("Preview purchase order")
+        submitted = st.form_submit_button("Preview cost estimate")
 
     if submitted:
         total = quantity * unit_price
-        st.subheader("Purchase order draft")
+        st.subheader("Unapproved cost estimate — not a purchase order")
         st.write(f"**Supplier:** {supplier}")
         st.write(f"**Item:** {item}")
         st.write(f"**Quantity:** {quantity}")
         st.write(f"**Unit price:** RM {unit_price:,.2f}")
-        st.metric("Draft total", f"RM {total:,.2f}")
-        st.caption(f"Draft prepared on {date.today().strftime('%d %b %Y')}.")
+        st.metric("Estimated item subtotal (delivery excluded)", f"RM {total:,.2f}")
+        st.caption(f"Estimate prepared on {date.today().strftime('%d %b %Y')}.")
 
 
 def render_activity_log() -> None:
     st.title("Activity Log")
+    st.subheader("Actual workflow events — this session")
+    st.caption("Times use Malaysia time (+08:00). These are actual user actions on fictional offers; no orders are sent.")
+    if st.session_state["events"]:
+        st.dataframe(list(reversed(st.session_state["events"])), hide_index=True, width="stretch")
+    else:
+        st.info("No workflow actions yet. Open Price Comparison to begin.")
+    st.subheader("Fictional sample history")
     st.write("A sample view of recent purchasing activity.")
     activity = [
         {"Date": "24 Oct 2026", "Activity": "Quotation received", "Details": "Metro Paper Trading · A4 Copy Paper"},
