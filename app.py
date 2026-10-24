@@ -3,6 +3,7 @@
 from datetime import date
 
 import streamlit as st
+from comparison import compare_offers, rm
 
 
 st.set_page_config(
@@ -43,19 +44,19 @@ SAMPLE_QUOTATIONS = [
 
 PRICE_COMPARISON = {
     "A4 Copy Paper (80gsm)": [
-        {"Supplier": "Metro Paper Trading", "Unit price (RM)": 13.90, "Delivery": "2–3 days"},
-        {"Supplier": "Kencana Office Supplies", "Unit price (RM)": 14.80, "Delivery": "1–2 days"},
-        {"Supplier": "Prima Stationery", "Unit price (RM)": 15.20, "Delivery": "3–5 days"},
+        {"Supplier": "Metro Paper Trading", "Unit price (RM)": 13.90, "Delivery": "2–3 days", "MOQ": 20, "Delivery fee": 40, "Max days": 3},
+        {"Supplier": "Kencana Office Supplies", "Unit price (RM)": 14.80, "Delivery": "1–2 days", "MOQ": 5, "Delivery fee": 10, "Max days": 2},
+        {"Supplier": "Prima Stationery", "Unit price (RM)": 15.20, "Delivery": "3–5 days", "MOQ": 10, "Delivery fee": 0, "Max days": 5},
     ],
     "Nitrile Gloves (box of 100)": [
-        {"Supplier": "Bina Jaya Hardware", "Unit price (RM)": 18.50, "Delivery": "2–3 days"},
-        {"Supplier": "SafePro Supplies", "Unit price (RM)": 19.20, "Delivery": "1–2 days"},
-        {"Supplier": "Meditek Trading", "Unit price (RM)": 20.00, "Delivery": "3–4 days"},
+        {"Supplier": "Bina Jaya Hardware", "Unit price (RM)": 18.50, "Delivery": "2–3 days", "MOQ": 20, "Delivery fee": 35, "Max days": 3},
+        {"Supplier": "SafePro Supplies", "Unit price (RM)": 19.20, "Delivery": "1–2 days", "MOQ": 5, "Delivery fee": 10, "Max days": 2},
+        {"Supplier": "Meditek Trading", "Unit price (RM)": 20.00, "Delivery": "3–4 days", "MOQ": 10, "Delivery fee": 0, "Max days": 4},
     ],
     "Thermal Receipt Rolls (box of 50)": [
-        {"Supplier": "Metro Paper Trading", "Unit price (RM)": 42.00, "Delivery": "2–3 days"},
-        {"Supplier": "Kencana Office Supplies", "Unit price (RM)": 44.50, "Delivery": "1–2 days"},
-        {"Supplier": "Prima Stationery", "Unit price (RM)": 46.00, "Delivery": "3–5 days"},
+        {"Supplier": "Metro Paper Trading", "Unit price (RM)": 42.00, "Delivery": "2–3 days", "MOQ": 20, "Delivery fee": 80, "Max days": 3},
+        {"Supplier": "Kencana Office Supplies", "Unit price (RM)": 44.50, "Delivery": "1–2 days", "MOQ": 5, "Delivery fee": 15, "Max days": 2},
+        {"Supplier": "Prima Stationery", "Unit price (RM)": 46.00, "Delivery": "3–5 days", "MOQ": 10, "Delivery fee": 0, "Max days": 5},
     ],
 }
 
@@ -103,17 +104,55 @@ def render_quotations() -> None:
 
 def render_price_comparison() -> None:
     st.title("Price Comparison")
-    st.write("Compare sample supplier pricing and delivery estimates by item.")
-
+    st.info("All supplier names, prices, minimum orders, fees and delivery estimates are fictional demonstration data.")
     item = st.selectbox("Choose an item", list(PRICE_COMPARISON))
-    offers = PRICE_COMPARISON[item]
-    lowest_offer = min(offers, key=lambda offer: offer["Unit price (RM)"])
-
-    st.dataframe(offers, hide_index=True, width="stretch")
-    st.success(
-        f"Lowest sample offer: {lowest_offer['Supplier']} at "
-        f"RM {lowest_offer['Unit price (RM)']:.2f} per unit."
+    st.caption("Quantity is in reams for paper, boxes of 100 for gloves, or boxes of 50 for receipt rolls.")
+    quantity = st.number_input(
+        "Required quantity", min_value=1, max_value=1_000_000,
+        value=10, step=1, key="comparison_quantity",
     )
+    try:
+        offers = compare_offers(PRICE_COMPARISON[item], quantity)
+    except ValueError as error:
+        st.error(str(error))
+        return
+    st.caption("Total cost = unit price × requested quantity + delivery fee. No quantity adjustment, taxes or other charges are included.")
+    eligible = [offer for offer in offers if offer["Eligible"]]
+    rows = []
+    for offer in offers:
+        rank = 1 + sum(other["Total"] < offer["Total"] for other in eligible) if offer["Eligible"] else "—"
+        rows.append({
+            "Rank": str(rank), "Supplier": offer["Supplier"],
+            "Unit price": rm(offer["Unit price (RM)"]),
+            "Minimum order quantity": offer["MOQ"], "Order quantity": quantity,
+            "Delivery fee": rm(offer["Delivery fee"]),
+            "Estimated delivery": offer["Delivery"],
+            "Total cost": rm(offer["Total"]),
+            "Eligibility": "Eligible" if offer["Eligible"] else f"Ineligible: minimum {offer['MOQ']} required",
+        })
+    st.dataframe(rows, hide_index=True, width="stretch")
+    st.caption("Eligible offers are ranked by total cost; equal totals share a rank. Ineligible totals are illustrative only, not orderable at this quantity.")
+    if not eligible:
+        st.warning("No supplier meets this quantity. Your requested quantity has not been changed. Enter a different quantity to compare again.")
+        return
+    best = eligible[0]
+    tied = [offer["Supplier"] for offer in eligible if offer["Total"] == best["Total"]]
+    st.success(
+        f"Recommended: {', '.join(tied)} — lowest eligible total of {rm(best['Total'])} "
+        f"for exactly {quantity} units. "
+        f"{rm(best['Unit price (RM)'])} × {quantity} + {rm(best['Delivery fee'])} delivery = {rm(best['Total'])}."
+    )
+    st.write(f"{best['Supplier']} meets its minimum order of {best['MOQ']}; estimated delivery: {best['Delivery']}.")
+    faster = [offer for offer in eligible if offer["Max days"] < best["Max days"]]
+    if faster:
+        alternative = min(faster, key=lambda offer: offer["Total"])
+        st.write(
+            f"Delivery trade-off: {alternative['Supplier']} estimates {alternative['Delivery']} "
+            f"rather than {best['Delivery']}, for {rm(alternative['Total'] - best['Total'])} more "
+            f"({rm(alternative['Total'])} total). Estimates are not guarantees."
+        )
+    else:
+        st.write("No eligible alternative has a shorter estimated maximum delivery time.")
 
 
 def render_purchase_orders() -> None:
