@@ -1,0 +1,1 @@
+- [Streamlit preview verification](streamlit-preview.md) — Preserve the Python app; verify the public router and WebSocket, not merely server startup.
