@@ -5,6 +5,7 @@ from datetime import date
 import streamlit as st
 from comparison import compare_offers, rm
 import purchase_workflow as workflow
+import quotations
 
 
 st.set_page_config(
@@ -70,6 +71,9 @@ NAVIGATION = [
 ]
 
 workflow.initialize(st.session_state)
+st.session_state.setdefault("quotations", [])
+SAMPLE_COMPARISON = PRICE_COMPARISON
+PRICE_COMPARISON = quotations.catalog(SAMPLE_COMPARISON, st.session_state["quotations"])
 
 
 def review_details(purchase):
@@ -80,6 +84,8 @@ def review_details(purchase):
         "Delivery fee": rm(offer["Delivery fee"]), "Total": rm(offer["Total"]),
         "Minimum-order status": f"Eligible — minimum {offer['MOQ']}",
         "Estimated delivery": offer["Delivery"],
+        "Pack / order unit": quotations.pack_label(purchase["Item"], offer),
+        "Data source": offer.get("Source", "Predefined fictional sample"),
     })
 
 
@@ -149,13 +155,14 @@ def render_quotations() -> None:
     st.write("Review fictional supplier quotations and response status.")
     st.caption("Sample records only — no supplier messages are sent or received.")
     st.dataframe(SAMPLE_QUOTATIONS, hide_index=True, width="stretch")
+    quotations.render_intake(SAMPLE_COMPARISON)
 
 
 def render_price_comparison() -> None:
     st.title("Price Comparison")
     st.info("All supplier names, prices, minimum orders, fees and delivery estimates are fictional demonstration data.")
     item = st.selectbox("Choose an item", list(PRICE_COMPARISON))
-    st.caption("Quantity is in reams for paper, boxes of 100 for gloves, or boxes of 50 for receipt rolls.")
+    st.caption(f"Quantity is in order units. Pack: {quotations.pack_label(item, PRICE_COMPARISON[item][0])}. Product/specification: {item}. Only matching specifications and pack sizes share a comparison.")
     quantity = st.number_input(
         "Required quantity", min_value=1, max_value=1_000_000,
         value=10, step=1, key="comparison_quantity",
@@ -172,6 +179,9 @@ def render_price_comparison() -> None:
         rank = 1 + sum(other["Total"] < offer["Total"] for other in eligible) if offer["Eligible"] else "—"
         rows.append({
             "Rank": str(rank), "Supplier": offer["Supplier"],
+            "Product/specification": item,
+            "Pack / order unit": quotations.pack_label(item, offer),
+            "Data source": offer.get("Source", "Predefined fictional sample"),
             "Unit price": rm(offer["Unit price (RM)"]),
             "Minimum order quantity": offer["MOQ"], "Order quantity": quantity,
             "Delivery fee": rm(offer["Delivery fee"]),
