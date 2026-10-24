@@ -21,3 +21,9 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+packages = ["python313Packages.openai"]
+
+[userenv]
+
+[userenv.shared]
+RUNPOD_API_KEY = "lxxso4tj09u5qvkvks0v"
